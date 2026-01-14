@@ -9,13 +9,13 @@ DHT dht(DHTPIN, DHTTYPE);
 
 // Ethernet beállítások (Hanrun HR911105A csatlakozóval, Ethernet shield feltételezve)
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; // MAC cím (cseréld ki a sajátodra)
-IPAddress fallbackIp(192, 168, 0, 100); // Fix IP ha DHCP hiba (az új kódból)
+IPAddress fallbackIp(192, 168, 108, 189); // Fix IP ha DHCP hiba (az új kódból)
 EthernetServer server(80); // Szerver mód az új kódból
 
 // Csak egy URL komponens: host és port, a path dinamikus (módosítva a kérésre)
-const char* host = "localhost"; // A szerver domain neve (localhost-ra módosítva, de ha nem működik, cseréld ki a szerver IP-jére, pl. "192.168.0.1"!)
+const char* host = "192.168.108.168"; // A szerver domain neve (localhost-ra módosítva, de ha nem működik, cseréld ki a szerver IP-jére, pl. "192.168.0.1"!)
 const int httpPort = 80; // HTTP port (alapértelmezett 80)
-const char* pathBase = "/sensor/display_data.php?temp="; // Az URL path alapja (módosítva a kérésre)
+const char* pathBase = "/sensor/insert_data.php?temperature="; // Az URL path alapja (módosítva a kérésre)
 
 EthernetClient uploadClient; // Külön kliens a feltöltéshez, hogy ne ütközzön a szerver klienssel
 
@@ -119,7 +119,7 @@ void uploadData() {
     Serial.println("Csatlakozva a szerverhez feltoltesre...");
     
     // GET request összeállítása: pl. /sensor/display_data.php?temp=25.50&hum=60.10
-    String path = String(pathBase) + String(lastTemp) + "&hum=" + String(lastHum);
+    String path = String(pathBase) + String(lastTemp) + "&humidity=" + String(lastHum);
     
     uploadClient.print("GET ");
     uploadClient.print(path);
