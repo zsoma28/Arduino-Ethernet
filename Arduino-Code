@@ -1,0 +1,89 @@
+#include <Ethernet.h>
+#include <DHT.h>
+
+// DHT szenzor beállítások
+#define DHTPIN 4 // DHT szenzor kimenete az Arduino 4-es pinjén
+#define DHTTYPE DHT11 // DHT11-et használsz (DHT22-höz írd át)
+DHT dht(DHTPIN, DHTTYPE);
+
+// Ethernet beállítások (Hanrun HR911105A csatlakozóval, Ethernet shield feltételezve)
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; // MAC cím (cseréld ki a sajátodra)
+IPAddress ip(192, 168, 1, 177); // Statikus IP cím (cseréld ki a hálózatodra megfelelőre)
+
+// Csak egy URL komponens: host és port, a path dinamikus
+const char* host = "example.com"; // A szerver domain neve (cseréld ki a saját szerveredre!)
+const int httpPort = 80; // HTTP port (alapértelmezett 80)
+const char* pathBase = "/update?temp="; // Az URL path alapja (cseréld ki, ha szükséges)
+
+EthernetClient client;
+
+// Globális változók az adatok tárolására
+volatile float lastTemp = 0.0;
+volatile float lastHum = 0.0;
+
+void setup() {
+  Serial.begin(9600);
+  
+  // Ethernet inicializálása
+  Ethernet.begin(mac, ip);
+  Serial.print("Ethernet IP: ");
+  Serial.println(Ethernet.localIP());
+  
+  dht.begin();
+  Serial.println("Ethernet DHT11 Szenzor elindult...");
+}
+
+void loop() {
+  // A DHT olvasása lassú, ezért csak 2 másodpercenként frissítjük
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  
+  // Csak akkor frissítünk, ha érvényes az adat (nem NaN)
+  if (!isnan(h) && !isnan(t)) {
+    lastTemp = t;
+    lastHum = h;
+    
+    // Debug kiírás a soros monitorra
+    Serial.print("Szenzor: ");
+    Serial.print(lastTemp);
+    Serial.print(" C, ");
+    Serial.print(lastHum);
+    Serial.println(" %");
+    
+    // Adatok feltöltése az URL-re
+    uploadData();
+  } else {
+    Serial.println("Hiba: Nem sikerült olvasni a DHT szenzort!");
+  }
+  delay(2000); // Várakozás a következő olvasásig
+}
+
+// Függvény az adatok HTTP GET requesttel történő feltöltésére
+void uploadData() {
+  if (client.connect(host, httpPort)) {
+    Serial.println("Csatlakozva a szerverhez...");
+    
+    // GET request összeállítása: pl. /update?temp=25.50&hum=60.10
+    String path = String(pathBase) + String(lastTemp) + "&hum=" + String(lastHum);
+    
+    client.print("GET ");
+    client.print(path);
+    client.println(" HTTP/1.1");
+    client.print("Host: ");
+    client.println(host);
+    client.println("Connection: close");
+    client.println();
+    
+    // Válasz olvasása (opcionális, debug célra)
+    while (client.connected()) {
+      while (client.available()) {
+        char c = client.read();
+        Serial.print(c);
+      }
+    }
+    client.stop();
+    Serial.println("Adatok feltöltve!");
+  } else {
+    Serial.println("Csatlakozás sikertelen!");
+  }
+}
