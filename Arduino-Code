@@ -1,40 +1,54 @@
+#include <SPI.h>
 #include <Ethernet.h>
 #include <DHT.h>
 
 // DHT szenzor beállítások
-#define DHTPIN 4 // DHT szenzor kimenete az Arduino 4-es pinjén
+#define DHTPIN 8 // DHT szenzor kimenete az Arduino 8-as pinjén (az új kódban 8, korábban 4 volt – módosítsd ha szükséges)
 #define DHTTYPE DHT11 // DHT11-et használsz (DHT22-höz írd át)
 DHT dht(DHTPIN, DHTTYPE);
 
 // Ethernet beállítások (Hanrun HR911105A csatlakozóval, Ethernet shield feltételezve)
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; // MAC cím (cseréld ki a sajátodra)
-IPAddress ip(192, 168, 1, 177); // Statikus IP cím (cseréld ki a hálózatodra megfelelőre)
+IPAddress fallbackIp(192, 168, 0, 100); // Fix IP ha DHCP hiba (az új kódból)
+EthernetServer server(80); // Szerver mód az új kódból
 
-// Csak egy URL komponens: host és port, a path dinamikus
-const char* host = "example.com"; // A szerver domain neve (cseréld ki a saját szerveredre!)
+// Csak egy URL komponens: host és port, a path dinamikus (módosítva a kérésre)
+const char* host = "localhost"; // A szerver domain neve (localhost-ra módosítva, de ha nem működik, cseréld ki a szerver IP-jére, pl. "192.168.0.1"!)
 const int httpPort = 80; // HTTP port (alapértelmezett 80)
-const char* pathBase = "/update?temp="; // Az URL path alapja (cseréld ki, ha szükséges)
+const char* pathBase = "/sensor/display_data.php?temp="; // Az URL path alapja (módosítva a kérésre)
 
-EthernetClient client;
+EthernetClient uploadClient; // Külön kliens a feltöltéshez, hogy ne ütközzön a szerver klienssel
 
 // Globális változók az adatok tárolására
 volatile float lastTemp = 0.0;
 volatile float lastHum = 0.0;
+unsigned long startTime;
 
+// Setup
 void setup() {
   Serial.begin(9600);
   
+  dht.begin();
+  startTime = millis();
+  
+  Serial.println("Ethernet inditasa /dht11 endpointtal es feltoltessel...");
+  
   // Ethernet inicializálása
-  Ethernet.begin(mac, ip);
-  Serial.print("Ethernet IP: ");
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("DHCP hiba – fix IP hasznalata");
+    Ethernet.begin(mac, fallbackIp);
+  }
+  delay(1000);
+  Serial.print("Arduino IP: ");
   Serial.println(Ethernet.localIP());
   
-  dht.begin();
+  server.begin();
   Serial.println("Ethernet DHT11 Szenzor elindult...");
 }
 
+// Loop
 void loop() {
-  // A DHT olvasása lassú, ezért csak 2 másodpercenként frissítjük
+  // Szenzor olvasás (lassú, ezért periodikusan)
   float h = dht.readHumidity();
   float t = dht.readTemperature();
   
@@ -50,40 +64,81 @@ void loop() {
     Serial.print(lastHum);
     Serial.println(" %");
     
-    // Adatok feltöltése az URL-re
+    // Adatok feltöltése az URL-re (az előző kódból)
     uploadData();
   } else {
     Serial.println("Hiba: Nem sikerült olvasni a DHT szenzort!");
   }
-  delay(2000); // Várakozás a következő olvasásig
+  
+  // Szerver kliens kezelés (az új kódból)
+  EthernetClient client = server.available();
+  if (client) {
+    String request = "";
+    // HTTP kérés első sorának beolvasása
+    while (client.available()) {
+      char c = client.read();
+      request += c;
+      // csak az első sor érdekel
+      if (c == '\n') break;
+    }
+    Serial.print("Keres: ");
+    Serial.println(request);
+    unsigned long uptimeSec = (millis() - startTime) / 1000;
+    // ---- URL ELLENORZES ----
+    if (request.indexOf("GET /dht11") >= 0) {
+      // JSON válasz
+      client.println("HTTP/1.1 200 OK");
+      client.println("Content-Type: application/json");
+      client.println("Connection: close");
+      client.println();
+      client.print("{\"temperature\":");
+      client.print(lastTemp);
+      client.print(",\"humidity\":");
+      client.print(lastHum);
+      client.print(",\"uptime\":");
+      client.print(uptimeSec);
+      client.println("}");
+      Serial.println("/dht11 JSON elkuldve");
+    } else {
+      // ha mas URL -> 404
+      client.println("HTTP/1.1 404 Not Found");
+      client.println("Connection: close");
+      client.println();
+      Serial.println("404 – nem /dht11 volt");
+    }
+    delay(1);
+    client.stop();
+  }
+  
+  delay(2000); // Várakozás a következő ciklusig (szenzor miatt 2s, de szerver miatt lehet kisebb is – állítsd igény szerint)
 }
 
-// Függvény az adatok HTTP GET requesttel történő feltöltésére
+// Függvény az adatok HTTP GET requesttel történő feltöltésére (az előző kódból)
 void uploadData() {
-  if (client.connect(host, httpPort)) {
-    Serial.println("Csatlakozva a szerverhez...");
+  if (uploadClient.connect(host, httpPort)) {
+    Serial.println("Csatlakozva a szerverhez feltoltesre...");
     
-    // GET request összeállítása: pl. /update?temp=25.50&hum=60.10
+    // GET request összeállítása: pl. /sensor/display_data.php?temp=25.50&hum=60.10
     String path = String(pathBase) + String(lastTemp) + "&hum=" + String(lastHum);
     
-    client.print("GET ");
-    client.print(path);
-    client.println(" HTTP/1.1");
-    client.print("Host: ");
-    client.println(host);
-    client.println("Connection: close");
-    client.println();
+    uploadClient.print("GET ");
+    uploadClient.print(path);
+    uploadClient.println(" HTTP/1.1");
+    uploadClient.print("Host: ");
+    uploadClient.println(host);
+    uploadClient.println("Connection: close");
+    uploadClient.println();
     
     // Válasz olvasása (opcionális, debug célra)
-    while (client.connected()) {
-      while (client.available()) {
-        char c = client.read();
+    while (uploadClient.connected()) {
+      while (uploadClient.available()) {
+        char c = uploadClient.read();
         Serial.print(c);
       }
     }
-    client.stop();
+    uploadClient.stop();
     Serial.println("Adatok feltöltve!");
   } else {
-    Serial.println("Csatlakozás sikertelen!");
+    Serial.println("Csatlakozás sikertelen a feltolteshez!");
   }
 }
